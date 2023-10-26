@@ -15,6 +15,9 @@ distribution_level = 0
 # 3: All
 # 4: Sharing Group
 # 5: Inherit Event
+import_extra_tags = False
+#merge_strategy="threat_by_day"
+merge_strategy="threat"
 import_filter = {
     "indicator_types": [
         "ip",

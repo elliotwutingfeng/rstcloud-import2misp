@@ -7,10 +7,14 @@ import logging
 import logging.handlers
 import json
 import gzip
+import uuid
 
 from pymisp import PyMISP, MISPEvent, MISPOrganisation
-from config import misp_url, misp_key, misp_verifycert, rst_api_key, distribution_level, publish, import_filter, log_params
+from config import misp_url, misp_key, misp_verifycert, rst_api_key, distribution_level, publish, import_filter, log_params, import_extra_tags, merge_strategy
 import argparse
+
+import urllib3
+urllib3.disable_warnings()
 
 RST_API_URL = 'https://api.rstcloud.net/v1/'
 HEADERS = {'Accept': 'application/json', 'X-Api-Key': rst_api_key}
@@ -55,14 +59,28 @@ def download_feed(URL, HEADERS):
                     pass
     return data
 
-
-def create_misp_event(name, data):
+def check_if_event_exists(misp, name, merge):
+    event_info = f"[RST Cloud] Threat Feed for: {name}"
+    if merge == 'threat_by_day':
+        event_info = f"[RST Cloud] {datetime.now().date().isoformat()} Threat Feed for: {name}"
+        
+    result = misp.search(controller='events', eventinfo=event_info)
+    if len(result) > 0:
+        return True
+    else:
+        return False
+    
+def bundle_misp_event(name, data, merge):
     org = MISPOrganisation()
     org.name = "RST Cloud"
     org.uuid = "b170e410-0b7c-4ae0-a676-89564e7a6178"
     event = MISPEvent()
-    event.info = f"[RST Cloud] {datetime.now().date().isoformat()} Threat Feed for: {name}"
+    if merge == 'threat_by_day':
+        event.info = f"[RST Cloud] {datetime.now().date().isoformat()} Threat Feed for: {name}"
+    else:
+        event.info = f"[RST Cloud] Threat Feed for: {name}"
     event.Orgc = org
+    event.uuid = uuid.uuid5(uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7"),event.info)
     event.distribution = distribution_level
     event.timestamp = datetime.now()
     event.add_tag(f'rstcloud:threat:name={name}')
@@ -79,36 +97,36 @@ def create_misp_event(name, data):
             TAG.append("rstcloud:category:name=" + str(rsttag))
         if "asn" in entry and "cloud" in entry['asn'] and entry['asn']['cloud']:
             TAG.append("rstcloud:cloudprovider:name=" + str(entry['asn']['cloud']))
-            
-        # Uncomment to get more tags. May impact performance
-        #
-        # if "asn" in entry and "num" in entry['asn'] and entry['asn']['num']:
-        #     TAG.append("rstcloud:asn:id=" + str(entry['asn']['num']))
-        # if "asn" in entry and "domains" in entry['asn'] and entry['asn']['domains']:
-        #     TAG.append("rstcloud:related_domains:number=" + str(entry['asn']['domains']))
+        
+        # use the option extra=true to get more tags. May impact performance
+        if extra:
+            if "asn" in entry and "num" in entry['asn'] and entry['asn']['num']:
+                TAG.append("rstcloud:asn:id=" + str(entry['asn']['num']))
+            if "asn" in entry and "domains" in entry['asn'] and entry['asn']['domains']:
+                TAG.append("rstcloud:related_domains:number=" + str(entry['asn']['domains']))
         if "asn" in entry and "org" in entry['asn'] and entry['asn']['org']:
             TAG.append("rstcloud:org:name="+str(entry['asn']['org']))
         if "asn" in entry and "isp" in entry['asn'] and entry['asn']['isp']:
             TAG.append("rstcloud:isp:name="+str(entry['asn']['isp']))
         
-        # Uncomment to get more tags. May impact performance
-        #
-        # if "geo" in entry and "city" in entry['geo'] and entry['geo']['city']:
-        #     TAG.append("rstcloud:geo:city=" + str(entry['geo']['city']))
-        # if "geo" in entry and "region" in entry['geo'] and entry['geo']['region']:
-        #     TAG.append("rstcloud:geo:region=" + str(entry['geo']['region']))
+        # use the option extra=true to get more tags. May impact performance
+        if extra:
+            if "geo" in entry and "city" in entry['geo'] and entry['geo']['city']:
+                TAG.append("rstcloud:geo:city=" + str(entry['geo']['city']))
+            if "geo" in entry and "region" in entry['geo'] and entry['geo']['region']:
+                TAG.append("rstcloud:geo:region=" + str(entry['geo']['region']))
         if "geo" in entry and "country" in entry['geo'] and entry['geo']['country']:
             TAG.append("rstcloud:geo:country=" + str(entry['geo']['country']))
         if 'resolved' in entry and 'status' in entry['resolved'] and entry['resolved']['status']>0:
             TAG.append("rstcloud:http:status=" + str(entry['resolved']['status']))
         if 'resolved' in entry and 'whois' in entry['resolved']:
-            # Uncomment to get more tags. May impact performance
-            #
-            # if entry['resolved']['whois']['age'] > 0:
-            #     TAG.append("rstcloud:whois:created=" + str(entry['resolved']['whois']['created']))
-            #     TAG.append("rstcloud:whois:updated=" + str(entry['resolved']['whois']['updated']))
-            #     TAG.append("rstcloud:whois:expires=" + str(entry['resolved']['whois']['expires']))
-            #     TAG.append("rstcloud:whois:age=" + str(entry['resolved']['whois']['age']))
+            # use the option extra=true to get more tags. May impact performance
+            if extra:
+                if entry['resolved']['whois']['age'] > 0:
+                    TAG.append("rstcloud:whois:created=" + str(entry['resolved']['whois']['created']))
+                    TAG.append("rstcloud:whois:updated=" + str(entry['resolved']['whois']['updated']))
+                    TAG.append("rstcloud:whois:expires=" + str(entry['resolved']['whois']['expires']))
+                    TAG.append("rstcloud:whois:age=" + str(entry['resolved']['whois']['age']))
             if entry['resolved']['whois']['registrar'] and entry['resolved']['whois']['registrar'] != 'unknown':
                 TAG.append("rstcloud:whois:registrar=" + str(entry['resolved']['whois']['registrar']))
             if entry['resolved']['whois']['registrar'] and entry['resolved']['whois']['registrant'] != 'unknown':
@@ -140,34 +158,43 @@ def create_misp_event(name, data):
         if 'domain' in entry:
             if entry["score"]["total"] > import_filter['setIDS']['domain']:
                 IDS = True
-            if entry["score"]["total"] > import_filter['score']['ip']:
+            if entry["score"]["total"] > import_filter['score']['domain']:
                 event.add_attribute('domain', to_ids=IDS, value=entry['domain'], first_seen=FSEEN, last_seen=LSEEN, Tag=TAG, comment=COMMENT)
         if 'url' in entry:
             if entry["score"]["total"] > import_filter['setIDS']['url']:
                 IDS = True
-            if entry["score"]["total"] > import_filter['score']['ip']:
+            if entry["score"]["total"] > import_filter['score']['url']:
                 event.add_attribute('url', to_ids=IDS, value=entry['url'], first_seen=FSEEN, last_seen=LSEEN, Tag=TAG, comment=COMMENT)
         if 'md5' in entry and len(entry['md5']) > 0:
             if entry["score"]["total"] > import_filter['setIDS']['hash']:
                 IDS = True
-            if entry["score"]["total"] > import_filter['score']['ip']:
+            if entry["score"]["total"] > import_filter['score']['hash']:
                 event.add_attribute('md5', to_ids=IDS, value=entry['md5'], first_seen=FSEEN, last_seen=LSEEN, Tag=TAG, comment=COMMENT)
         if 'sha1' in entry and len(entry['sha1']) > 0:
             if entry["score"]["total"] > import_filter['setIDS']['hash']:
                 IDS = True
-            if entry["score"]["total"] > import_filter['score']['ip']:
+            if entry["score"]["total"] > import_filter['score']['hash']:
                 event.add_attribute('sha1', to_ids=IDS, value=entry['sha1'], first_seen=FSEEN, last_seen=LSEEN, Tag=TAG, comment=COMMENT)
         if 'sha256' in entry and len(entry['sha256']) > 0:
             if entry["score"]["total"] > import_filter['setIDS']['hash']:
                 IDS = True
-            if entry["score"]["total"] > import_filter['score']['ip']:
+            if entry["score"]["total"] > import_filter['score']['hash']:
                 event.add_attribute('sha256', to_ids=IDS, value=entry['sha256'], first_seen=FSEEN, last_seen=LSEEN, Tag=TAG, comment=COMMENT)
+    return event
 
+def create_misp_event(name, data, merge):
+    misp_event = bundle_misp_event(name, data, merge)
     # add to the database and publish
-    event = misp.add_event(event)
+    event = misp.add_event(misp_event)
     if publish:
         misp.publish(event)
 
+def update_misp_event(name, data, merge):
+    misp_event = bundle_misp_event(name, data, merge)
+    # update the event and publish
+    event = misp.update_event(misp_event)
+    if publish:
+        misp.publish(event)
 
 def process_files(data):
     logger.debug("Processing the feeds")
@@ -196,20 +223,51 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     valid_log_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    valid_merge_strategies = ['threat_by_day', 'threat']
+    valid_extra_values = ['false', 'true', 'False', 'True', '1', '0']
+    
     if args.loglevel is None:
         if log_params['level'] in valid_log_levels:
             logger.setLevel(getattr(logging, log_params['level']))
         else:
-            parser.error(f"Invalid log level: {log_params['level']}")
+            parser.error(f"Invalid log level")
     else:
-        
+
         if args.loglevel in valid_log_levels:
             logger.setLevel(getattr(logging, args.loglevel))
         else:
-            parser.error(f"Invalid log level: {args.loglevel}")
+            parser.error(f"Invalid log level")
+    
+    merge = "threat"
+    if merge_strategy and merge_strategy in valid_merge_strategies:
+        merge = merge_strategy
+    else:
+        parser.error(f"Invalid merge strategy")
+        
+    extra = False
+    if type(import_extra_tags) == bool:
+        if import_extra_tags:
+            extra = True
+    else:
+        parser.error(f"Invalid import_extra_tags")
+        
     data = download_files()
     processed_data = process_files(data)
     misp = init(misp_url, misp_key)
     for threat in processed_data:
         logger.debug(f'Publishing an event for {threat}')
-        create_misp_event(threat, processed_data[threat])
+        if merge == 'threat_by_day':
+            event = check_if_event_exists(misp, threat, merge)
+            if event:
+                logger.info(f'Skipping the event for {threat} to avoid duplication')
+            else:
+                create_misp_event(misp, threat, merge)
+        elif merge == 'threat':
+            event = check_if_event_exists(misp, threat, merge)
+            if event:
+                update_misp_event(threat, processed_data[threat], merge)
+            else:
+                create_misp_event(threat, processed_data[threat], merge)
+        else:
+            logger.error('Unknown merging strategy')
+            exit(1)
