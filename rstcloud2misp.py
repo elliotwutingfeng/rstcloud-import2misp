@@ -37,14 +37,6 @@ def init(url, key):
     return PyMISP(url, key, misp_verifycert)
 
 
-def listToString(s):
-    if isinstance(s, list):
-        delimiter = " | "
-        return delimiter.join(s)
-    elif isinstance(s, str):
-        return s
-
-
 def load_json_data(file_path):
     with open(file_path, "r", encoding="UTF-8") as file:
         data = json.load(file)
@@ -94,17 +86,31 @@ def download_feed(URL, HEADERS):
 
 
 def check_if_event_exists(misp, name, merge):
-    event_info = f"[RST Cloud] Threat Feed for: {name}"
-    if merge == "threat_by_day":
-        event_info = (
-            f"[RST Cloud] {datetime.now().date().isoformat()} Threat Feed for: {name}"
-        )
-
+    event_info = generate_event_info(merge, name)
     result = misp.search(controller="events", eventinfo=event_info)
     if len(result) > 0:
         return True
     else:
         return False
+
+
+def format_tag(name, value):
+    return f'{name}="{value}"'
+
+
+# Generates event.info for a MISP Event based on a seclected merge strategy
+# for a given threat name
+def generate_event_info(merge, name):
+    event_prefix = "[RST Cloud] Threat Feed"
+    if merge == "threat_by_day":
+        event_prefix = f"{event_prefix} {datetime.now().date().isoformat()}"
+    elif merge == "threat_by_month":
+        event_prefix = f"{event_prefix} {datetime.now().strftime('%Y-%m')}"
+    elif merge == "threat_by_year":
+        event_prefix = f"{event_prefix} {datetime.now().strftime('%Y')}"
+    else:
+        pass
+    return f"{event_prefix}: {name}"
 
 
 def check_for_hash(entry):
@@ -123,25 +129,27 @@ def check_for_hash(entry):
 
 def threat_tag_mapping(threat):
     if threat.endswith("_group"):
-        return "misp-galaxy:threat-actor=" + threat.replace("_group", "")
+        return format_tag("misp-galaxy:threat-actor", threat.replace("_group", ""))
     elif threat.endswith("_tool"):
-        return "misp-galaxy:tool=" + threat.replace("_tool", "")
+        return format_tag("misp-galaxy:tool", threat.replace("_tool", ""))
     elif threat.endswith("_stealer"):
-        return "misp-galaxy:stealer=" + threat.replace("_stealer", "")
+        return format_tag("misp-galaxy:stealer", threat.replace("_stealer", ""))
     elif threat.endswith("_backdoor"):
-        return "misp-galaxy:backdoor=" + threat.replace("_backdoor", "")
+        return format_tag("misp-galaxy:backdoor", threat.replace("_backdoor", ""))
     elif threat.endswith("_ransomware"):
-        return "misp-galaxy:ransomware=" + threat.replace("_ransomware", "")
+        return format_tag("misp-galaxy:ransomware", threat.replace("_ransomware", ""))
     elif threat.endswith("_miner"):
-        return "misp-galaxy:cryptominers=" + threat.replace("_miner", "")
+        return format_tag("misp-galaxy:cryptominers", threat.replace("_miner", ""))
     elif threat.endswith("_exploit"):
-        return "misp-galaxy:exploit-kit=" + threat.replace("_exploit", "")
+        return format_tag("misp-galaxy:exploit-kit", threat.replace("_exploit", ""))
     elif threat.endswith("_backdoor"):
-        return "misp-galaxy:backdoor=" + threat.replace("_backdoor", "")
+        return format_tag("misp-galaxy:backdoor", threat.replace("_backdoor", ""))
+    elif threat.endswith("_botnet"):
+        return format_tag("misp-galaxy:botnet", threat.replace("_botnet", ""))
     elif threat.endswith("_rat"):
-        return "misp-galaxy:rat=" + threat.replace("_rat", "")
+        return format_tag("misp-galaxy:rat", threat.replace("_rat", ""))
     else:
-        return "rstcloud:threat:name=" + threat
+        return format_tag("rstcloud:threat:name", threat)
 
 
 def add_ref_update_event(REF, event, object):
@@ -158,12 +166,7 @@ def bundle_misp_event(name, data, merge, filter, extra):
     org.name = "RST Cloud"
     org.uuid = "b170e410-0b7c-4ae0-a676-89564e7a6178"
     event = MISPEvent()
-    if merge == "threat_by_day":
-        event.info = (
-            f"[RST Cloud] {datetime.now().date().isoformat()} Threat Feed for: {name}"
-        )
-    else:
-        event.info = f"[RST Cloud] Threat Feed for: {name}"
+    event.info = generate_event_info(merge, name)
     event.Orgc = org
     event.uuid = uuid.uuid5(
         uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7"), event.info
@@ -174,7 +177,7 @@ def bundle_misp_event(name, data, merge, filter, extra):
     if "rstcloud" not in event_tag:
         # tag using misp galaxy notation
         event.add_tag(event_tag)
-        event.add_tag(f"rstcloud:threat:name={name}")
+        event.add_tag(format_tag("rstcloud:threat:name", name))
     else:
         # tag with rstcloud names for search consistency for all rst data
         event.add_tag(event_tag)
@@ -200,9 +203,9 @@ def bundle_misp_event(name, data, merge, filter, extra):
         for threat in entry["threat"]:
             TAG.append(threat_tag_mapping(threat))
         for rsttag in entry["tags"]["str"]:
-            TAG.append("rstcloud:category:name=" + str(rsttag))
+            TAG.append(format_tag("rstcloud:category:name", rsttag))
 
-        TAG.append("rstcloud:score:total=" + str(entry["score"]["total"]))
+        TAG.append(format_tag("rstcloud:score:total", entry["score"]["total"]))
 
         if entry["fp"] and entry["fp"]["alarm"]:
             if entry["fp"]["alarm"] == "true":
@@ -218,13 +221,15 @@ def bundle_misp_event(name, data, merge, filter, extra):
             COMMENT = str(entry["fp"]["descr"])
         if len(entry["cve"]) > 0 and entry["cve"]:
             for cve in entry["cve"]:
-                TAG.append("rstcloud:cve:id=" + cve.upper())
+                TAG.append(format_tag("rstcloud:cve:id", cve.upper()))
         if len(entry["ttp"]) > 0:
             for ttp_id in entry["ttp"]:
                 try:
                     TAG.append(
-                        "misp-galaxy:mitre-attack-pattern="
-                        + str(lookup_value(mitre_ttps, ttp_id.upper()))
+                        format_tag(
+                            "misp-galaxy:mitre-attack-pattern",
+                            lookup_value(mitre_ttps, ttp_id.upper()),
+                        )
                     )
                 except Exception as ex:
                     logger.error(
@@ -232,7 +237,7 @@ def bundle_misp_event(name, data, merge, filter, extra):
                     )
         if len(entry["industry"]) > 0 and entry["industry"]:
             for industry in entry["industry"]:
-                TAG.append("misp-galaxy:sector=" + industry)
+                TAG.append(format_tag("misp-galaxy:sector", industry))
 
         if entry["src"] and entry["src"]["report"] and len(entry["src"]["report"]) > 0:
             # extract references
@@ -508,7 +513,12 @@ if __name__ == "__main__":
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-    valid_merge_strategies = ["threat_by_day", "threat"]
+    valid_merge_strategies = [
+        "threat_by_day",
+        "threat_by_month",
+        "threat_by_year",
+        "threat",
+    ]
     valid_filter_strategies = ["all", "recent", "only_new"]
     valid_extra_values = ["false", "true", "False", "True", "1", "0"]
 
@@ -555,8 +565,10 @@ if __name__ == "__main__":
             if event:
                 logger.info(f"Skipping the event for {threat} to avoid duplication")
             else:
-                create_misp_event(misp, threat, merge)
-        elif merge == "threat":
+                create_misp_event(threat, processed_data[threat], merge, filter, extra)
+        elif (
+            merge == "threat" or merge == "threat_by_month" or merge == "threat_by_year"
+        ):
             event = check_if_event_exists(misp, threat, merge)
             if event:
                 update_misp_event(threat, processed_data[threat], merge, filter, extra)

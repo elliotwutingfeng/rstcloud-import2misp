@@ -18,8 +18,12 @@ distribution_level = 0
 # 5: Inherit Event
 import_extra_data = True
 path_to_mitre_json = "mitre-attack-pattern.json"
+
+# choose one of the merge strategies: threat_by_day, threat_by_month, threat_by_year, threat
 # merge_strategy="threat_by_day"
-merge_strategy = "threat"
+# merge_strategy="threat_by_month"
+merge_strategy="threat_by_year"
+# merge_strategy = "threat"
 
 # filter_strategy="all" - import the whole feed
 # filter_strategy="recent" - import only recent values (anything updated for the last 24 hours)
@@ -27,7 +31,7 @@ merge_strategy = "threat"
 filter_strategy = "recent"
 import_filter = {
     "indicator_types": ["ip", "domain", "url", "hash"],
-    "score": {"ip": 40, "domain": 25, "url": 10, "hash": 10},
+    "score": {"ip": 20, "domain": 20, "url": 10, "hash": 10},
     "setIDS": {"ip": 55, "domain": 45, "url": 30, "hash": 15},
 }
 publish = True
