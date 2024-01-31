@@ -9,7 +9,7 @@ By default a distinct event is created or updated for each threat name per year.
 ![RST Cloud attributes in MISP](/screenshot_attributes.png)
 ![RST Cloud events in MISP](/screenshot.png)
 
-Use cron to configure the script to run daily from 1 am to 3 am UTC.
+Use cron to configure the script to run daily from 1 am to 3 am UTC. Running the script more often will create a lot of duplicated attributes.
 
 To trial, please, contact us at [trial@rstcloud.net](mailto:trial@rstcloud.net) or use the following link [https://www.rstcloud.com/#free-trial](https://www.rstcloud.com/#free-trial)
 
@@ -47,16 +47,21 @@ Please choose a strategy how MISP events are to be created:
    - default option
    - all indicators are grouped by a threat name and by year
    - around 5000 events a year with thousands of indicators in each event
+   - we recommend using it alongside with filter_strategy="recent" to get updated indicators without deleting the old ones. This helps to keep the manual modifications made to the attributes while also receiving updates
+   - Attributes are often duplicated when using filter_strategy='all' because, when updating events, the attribute-level merge does not occur for objects due to MISP limitations
 2. merge_strategy="threat_by_month"
-   - all indicators are grouped by a threat name and by month in the year
+   - all indicators are grouped by a threat name and by month in the given year
    - up to 12 times more events, but less attributes per event
+   - we recommend using it alongside with filter_strategy="recent" or "only_new"
 3. merge_strategy="threat_by_day"
    - all indicators are grouped by a threat name per day
    - events are smaller but there are more of them (the worst case scenario is 365 events per each malware a year)
-   - MISP correlation function may be impacting query performance
+   - MISP correlation function may be impacting query performance if filter_strategy="all" is selected
+   - we recommend using it alongside with filter_strategy="recent" or "only_new"
 4. merge_strategy="threat"
    - all indicators are grouped just by a threat name
    - events tend to become bigger and bigger over time
+   - we recommend using it alongside with filter_strategy="recent" or "only_new"
 
 ### Advanced
 
