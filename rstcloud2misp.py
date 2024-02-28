@@ -10,6 +10,7 @@ import uuid
 
 from pymisp import PyMISP, MISPEvent, MISPOrganisation, MISPObject
 from config import (
+    rst_api_url,
     misp_url,
     misp_key,
     misp_verifycert,
@@ -29,7 +30,7 @@ import urllib3
 
 urllib3.disable_warnings()
 
-RST_API_URL = "https://api.rstcloud.net/v1/"
+
 HEADERS = {"Accept": "application/json", "X-Api-Key": rst_api_key}
 
 
@@ -57,7 +58,7 @@ def download_files():
     data = {}
     for url in file_urls:
         logger.info(f"Downloading {url} feed")
-        data[url] = download_feed(f"{RST_API_URL}{url}?type=json&date=latest", HEADERS)
+        data[url] = download_feed(f"{rst_api_url}{url}?type=json&date=latest", HEADERS)
     return data
 
 

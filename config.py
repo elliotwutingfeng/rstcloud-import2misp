@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
+rst_api_url = "https://api.rstcloud.net/v1/"
 rst_api_key = "get_from_rstcloud"
 misp_url = "https://127.0.0.1/"  # change to the URL of your MISP server
 # The MISP auth key can be created on the MISP web interface
